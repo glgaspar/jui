@@ -1,20 +1,17 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/gdamore/tcell/v2"
+	"github.com/glgaspar/jui/config"
 	"github.com/glgaspar/jui/view"
-	"github.com/joho/godotenv"
 	"github.com/rivo/tview"
 )
 
 var app = tview.NewApplication()
 
 func main() {
-	err := godotenv.Load(".env")
-	if err != nil {
-		panic(err)
-	}
-
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyCtrlC {
 			app.Stop()
@@ -23,25 +20,38 @@ func main() {
 		return event
 	})
 
-	homeView := &view.HomeView{App: app}
-	homeView.Render()
+	pages := tview.NewPages()
+	homeView := &view.HomeView{App: app, Pages: pages}
 
-	// all this is just me trying to figure out how to use tview, will be removed later
-	// box1 := tview.NewBox().SetBorder(false).SetTitle("JUI")
-	// box2 := tview.NewBox().SetBorder(false).SetTitle("JUI")
+	var homeRendered bool
+	configView := &view.ConfigView{
+		App:   app,
+		Pages: pages,
+		OnGoHome: func() {
+			if config.APIURL == "" {
+				return
+			}
+			if !homeRendered {
+				homeView.Render()
+				homeRendered = true
+			}
+			pages.SwitchToPage("home")
+		},
+	}
+	configView.Render()
 
-	// grid := tview.NewGrid().
-	// 	SetRows(1,0).
-	// 	SetBorders(true).
-	// 	AddItem(box1, 0, 0, 1, 1, 0, 0, false).
-	// 	AddItem(box2, 1, 0, 1, 1, 0, 0, false)
-	// 	// AddItem(tview.NewBox(), 1, 2, 1, 1, 0, 100, false)
-
-	// app.SetTitle("JUI").
-	// 	SetRoot(grid, true).
-	// 	SetFocus(box1)
-
-	// if err := app.SetRoot(grid, true).Run(); err != nil {
-	// 	panic(err)
-	// }
+	app.SetRoot(pages, true)
+	if config.APIURL == "" {
+		fmt.Println("Warning: API URL is empty!")
+		pages.SwitchToPage("config")
+	} else {
+		if !homeRendered {
+			homeView.Render()
+			homeRendered = true
+		}
+		pages.SwitchToPage("home")
+	}
+	if err := app.Run(); err != nil {
+		fmt.Println("Error running app:", err)
+	}
 }

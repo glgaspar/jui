@@ -1,12 +1,12 @@
 package view
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"os"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/glgaspar/jui/data"
 	"github.com/rivo/tview"
 )
 
@@ -43,13 +43,11 @@ type HomeBuildQueue struct {
 }
 
 func (bq *HomeBuildQueue) FetchBuildQueue() {
-	res, err := http.Get(os.Getenv("JENKINS_URL") + "/queue/api/json")
+	res, err := data.Api("GET", "/queue/api/json", nil)
 	if err != nil {
 		panic(err)
 	}
-	defer res.Body.Close()
-
-	err = json.NewDecoder(res.Body).Decode(bq)
+	err = json.NewDecoder(bytes.NewReader(*res)).Decode(bq)
 	if err != nil {
 		panic(err)
 	}
@@ -114,13 +112,11 @@ type HomeBuildExecutor struct {
 }
 
 func (be *HomeBuildExecutor) FetchBuildExecutors() {
-	res, err := http.Get(os.Getenv("JENKINS_URL") + "/computer/api/json?tree=computer[displayName,executors[currentExecutable[*]]]")
+	res, err := data.Api("GET", "/computer/api/json?tree=computer[displayName,executors[currentExecutable[*]]]", nil)
 	if err != nil {
 		panic(err)
 	}
-	defer res.Body.Close()
-
-	err = json.NewDecoder(res.Body).Decode(be)
+	err = json.NewDecoder(bytes.NewReader(*res)).Decode(be)
 	if err != nil {
 		panic(err)
 	}
@@ -174,13 +170,11 @@ type HomeProjectList struct {
 }
 
 func (pl *HomeProjectList) FetchProjectList() {
-	res, err := http.Get(os.Getenv("JENKINS_URL") + "/api/json?tree=jobs[name,color,lastBuild[number,result]]")
+	res, err := data.Api("GET", "/api/json?tree=jobs[name,color,lastBuild[number,result]]", nil)
 	if err != nil {
 		panic(err)
 	}
-	defer res.Body.Close()
-
-	err = json.NewDecoder(res.Body).Decode(pl)
+	err = json.NewDecoder(bytes.NewReader(*res)).Decode(pl)
 	if err != nil {
 		panic(err)
 	}
@@ -236,6 +230,7 @@ func (pl *HomeProjectList) Display() *tview.Table {
 
 type HomeView struct {
 	App *tview.Application
+	Pages *tview.Pages
 }
 
 func (h *HomeView) Render() {
@@ -287,13 +282,13 @@ func (h *HomeView) Render() {
 			case 'q':
 				h.App.Stop()
 				return nil
+			case 'C':
+				h.Pages.SwitchToPage("config")
+				return nil
 			}
 		}
 		return event
 	})	
 
-	h.App.SetRoot(grid, true)
-	if err := h.App.SetRoot(grid, true).Run(); err != nil {
-		panic(err)
-	}
+	h.Pages.AddPage("home", grid, true, true)
 }
