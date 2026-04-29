@@ -12,15 +12,20 @@ import (
 var app = tview.NewApplication()
 
 func main() {
+	pages := tview.NewPages()
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyCtrlC {
 			app.Stop()
 			return nil
 		}
+		if event.Key() == tcell.KeyRune {
+			if event.Rune() == '?' {
+				view.ShowHelp(app, pages)
+				return nil
+			}
+		}
 		return event
 	})
-
-	pages := tview.NewPages()
 	homeView := &view.HomeView{App: app, Pages: pages}
 
 	var homeRendered bool
