@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/glgaspar/jui/data"
@@ -11,35 +12,14 @@ import (
 )
 
 type HomeBuildQueueItem struct {
-	Class   string `json:"_class"`
-	Actions []struct {
-		Class  string `json:"_class"`
-		Causes []struct {
-			Class            string `json:"_class"`
-			ShortDescription string `json:"shortDescription"`
-		} `json:"causes"`
-	} `json:"actions"`
-	Blocked      bool   `json:"blocked"`
-	Buildable    bool   `json:"buildable"`
-	ID           int    `json:"id"`
-	InQueueSince int64  `json:"inQueueSince"`
-	Params       string `json:"params"`
-	Stuck        bool   `json:"stuck"`
-	Task         struct {
-		Class string `json:"_class"`
-		Name  string `json:"name"`
-		URL   string `json:"url"`
-		Color string `json:"color"`
+	Task struct {
+		Name string `json:"name"`
 	} `json:"task"`
-	URL                        string `json:"url"`
-	Why                        string `json:"why"`
-	BuildableStartMilliseconds int64  `json:"buildableStartMilliseconds"`
+	Why string `json:"why"`
 }
 
 type HomeBuildQueue struct {
-	Class             string               `json:"_class"`
-	DiscoverableItems []interface{}        `json:"discoverableItems"`
-	Items             []HomeBuildQueueItem `json:"items"`
+	Items []HomeBuildQueueItem `json:"items"`
 }
 
 func (bq *HomeBuildQueue) FetchBuildQueue() {
@@ -72,40 +52,12 @@ func (bq *HomeBuildQueue) Display() *tview.Table {
 }
 
 type HomeBuildExecutor struct {
-	Class    string `json:"_class"`
 	Computer []struct {
-		Class       string `json:"_class"`
 		DisplayName string `json:"displayName"`
 		Executors   []struct {
 			CurrentExecutable struct {
-				Class   string `json:"_class"`
-				Actions []struct {
-					Class string `json:"_class,omitempty"`
-				} `json:"actions"`
-				Artifacts         []interface{} `json:"artifacts"`
-				Building          bool          `json:"building"`
-				Description       interface{}   `json:"description"`
-				DisplayName       string        `json:"displayName"`
-				Duration          int           `json:"duration"`
-				EstimatedDuration int           `json:"estimatedDuration"`
-				Executor          struct {
-				} `json:"executor"`
-				Fingerprint     []interface{} `json:"fingerprint"`
-				FullDisplayName string        `json:"fullDisplayName"`
-				ID              string        `json:"id"`
-				InProgress      bool          `json:"inProgress"`
-				KeepLog         bool          `json:"keepLog"`
-				Number          int           `json:"number"`
-				QueueID         int           `json:"queueId"`
-				Result          interface{}   `json:"result"`
-				Timestamp       int64         `json:"timestamp"`
-				URL             string        `json:"url"`
-				BuiltOn         string        `json:"builtOn"`
-				ChangeSet       struct {
-					Class string `json:"_class"`
-				} `json:"changeSet"`
-				Culprits []struct {
-				} `json:"culprits"`
+				FullDisplayName string      `json:"fullDisplayName"`
+				Result          interface{} `json:"result"`
 			} `json:"currentExecutable"`
 		} `json:"executors"`
 	} `json:"computer"`
@@ -157,9 +109,7 @@ func (be *HomeBuildExecutor) Display() *tview.Table {
 //lastBuild: Details on the most recent build (number, url, result).
 
 type HomeProjectList struct {
-	Class string `json:"_class"`
-	Jobs  []struct {
-		Class     string `json:"_class"`
+	Jobs []struct {
 		Name      string `json:"name"`
 		Color     string `json:"color,omitempty"`
 		LastBuild *struct {
@@ -181,7 +131,7 @@ func (pl *HomeProjectList) FetchProjectList() {
 }
 
 func (pl *HomeProjectList) Display() *tview.Table {
-	projectDetail := ProjectDetail{}
+	projectDetail := Project{}
 
 	table := tview.NewTable().
 		// SetBorders(true).
@@ -196,7 +146,7 @@ func (pl *HomeProjectList) Display() *tview.Table {
 				job := pl.Jobs[row-1]
 
 				projectDetail.Name = job.Name
-				projectDetail.TakeOver()
+				// projectDetail.TakeOver()
 
 			}
 			return nil
@@ -229,7 +179,7 @@ func (pl *HomeProjectList) Display() *tview.Table {
 }
 
 type HomeView struct {
-	App *tview.Application
+	App   *tview.Application
 	Pages *tview.Pages
 }
 
@@ -247,6 +197,65 @@ func (h *HomeView) Render() {
 	executorTable := buildExecutor.Display()
 	projectTable := projectList.Display()
 
+	queueTable.SetFocusFunc(func() { queueTable.SetBorderColor(tcell.ColorGreen) })
+	queueTable.SetBlurFunc(func() { queueTable.SetBorderColor(tcell.ColorWhite) })
+
+	executorTable.SetFocusFunc(func() { executorTable.SetBorderColor(tcell.ColorGreen) })
+	executorTable.SetBlurFunc(func() { executorTable.SetBorderColor(tcell.ColorWhite) })
+
+	projectTable.SetFocusFunc(func() { projectTable.SetBorderColor(tcell.ColorGreen) })
+	projectTable.SetBlurFunc(func() { projectTable.SetBorderColor(tcell.ColorWhite) })
+
+	queueTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEnter {
+			row, _ := queueTable.GetSelection()
+			if row > 0 && row <= len(buildQueue.Items) {
+				item := buildQueue.Items[row-1]
+				p := &Project{Name: item.Task.Name, App: h.App, Pages: h.Pages}
+				p.ProjectPage()
+			}
+			return nil
+		}
+		return event
+	})
+
+	execNames := []string{}
+	for _, computer := range buildExecutor.Computer {
+		for _, executor := range computer.Executors {
+			if executor.CurrentExecutable.FullDisplayName == "" {
+				continue
+			}
+			full := executor.CurrentExecutable.FullDisplayName
+			parts := strings.SplitN(full, " #", 2)
+			execNames = append(execNames, parts[0])
+		}
+	}
+	executorTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEnter {
+			row, _ := executorTable.GetSelection()
+			if row > 0 && row <= len(execNames) {
+				name := execNames[row-1]
+				p := &Project{Name: name, App: h.App, Pages: h.Pages}
+				p.ProjectPage()
+			}
+			return nil
+		}
+		return event
+	})
+
+	projectTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEnter {
+			row, _ := projectTable.GetSelection()
+			if row > 0 && row <= len(projectList.Jobs) {
+				job := projectList.Jobs[row-1]
+				p := &Project{Name: job.Name, App: h.App, Pages: h.Pages}
+				p.ProjectPage()
+			}
+			return nil
+		}
+		return event
+	})
+
 	focusables := []tview.Primitive{queueTable, executorTable, projectTable}
 	focusIndex := 0
 
@@ -259,7 +268,7 @@ func (h *HomeView) Render() {
 		AddItem(executorTable, 1, 0, 1, 1, 0, 0, false).
 		AddItem(projectTable, 0, 1, 2, 1, 0, 0, false)
 
-	h.App.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+	grid.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyTab {
 			focusIndex = (focusIndex + 1) % len(focusables)
 			h.App.SetFocus(focusables[focusIndex])
@@ -288,7 +297,7 @@ func (h *HomeView) Render() {
 			}
 		}
 		return event
-	})	
+	})
 
 	h.Pages.AddPage("home", grid, true, true)
 }
