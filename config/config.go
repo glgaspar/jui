@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/ini.v1"
 )
@@ -17,6 +18,7 @@ const (
 var (
 	APIURL     string
 	APIHEADERS Headers
+	configPath string
 )
 
 type Config struct {
@@ -30,7 +32,19 @@ type Api struct {
 type Headers map[string]string
 
 func init() {
-	if err := checkForFileAndInitialize("config/config.ini"); err != nil {
+	cfgDir, err := os.UserConfigDir()
+	if err != nil || cfgDir == "" {
+		cfgDir = "config"
+	}
+	cfgDir = filepath.Join(cfgDir, "jui")
+	configPath = filepath.Join(cfgDir, "config.ini")
+
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		fmt.Printf("Error creating config dir: %s\n", err)
+		os.Exit(1)
+	}
+
+	if err := checkForFileAndInitialize(configPath); err != nil {
 		fmt.Printf("Error creating config file: %s\n", err)
 		os.Exit(1)
 	}
@@ -66,6 +80,10 @@ func init() {
 }
 
 func checkForFileAndInitialize(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		file, err := os.Create(path)
 		if err != nil {
@@ -77,8 +95,7 @@ func checkForFileAndInitialize(path string) error {
 			"Content-Type": "application/json",
 		}
 
-		err = SaveHeaders(baseHeader)
-		if err != nil {
+		if err := SaveHeaders(baseHeader); err != nil {
 			return err
 		}
 	}
@@ -86,11 +103,10 @@ func checkForFileAndInitialize(path string) error {
 	return nil
 }
 
-
 func ReadConfig(section SectionType) (*Config, error) {
 	c := new(Config)
 
-	cfg, err := ini.Load("config/config.ini")
+	cfg, err := ini.Load(configPath)
 	if err != nil {
 		return c, err
 	}
@@ -111,13 +127,13 @@ func ReadConfig(section SectionType) (*Config, error) {
 }
 
 func SaveApi(url string) error {
-	cfg, err := ini.Load("config/config.ini")
+	cfg, err := ini.Load(configPath)
 	if err != nil {
 		return err
 	}
 	sec := cfg.Section(string(APIDATA))
 	sec.Key("url").SetValue(url)
-	if err := cfg.SaveTo("config/config.ini"); err != nil {
+	if err := cfg.SaveTo(configPath); err != nil {
 		return err
 	}
 	APIURL = url
@@ -125,9 +141,9 @@ func SaveApi(url string) error {
 }
 
 func SaveHeaders(headers map[string]string) error {
-	cfg, err := ini.Load("config/config.ini")
+	cfg, err := ini.Load(configPath)
 	if err != nil {
-		return err
+		cfg = ini.Empty()
 	}
 	cfg.DeleteSection(string(HEADERDATA))
 	sec, err := cfg.NewSection(string(HEADERDATA))
@@ -137,7 +153,7 @@ func SaveHeaders(headers map[string]string) error {
 	for k, v := range headers {
 		sec.Key(k).SetValue(v)
 	}
-	if err := cfg.SaveTo("config/config.ini"); err != nil {
+	if err := cfg.SaveTo(configPath); err != nil {
 		return err
 	}
 	APIHEADERS = headers
