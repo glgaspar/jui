@@ -30,6 +30,11 @@ type Api struct {
 type Headers map[string]string
 
 func init() {
+	if err := checkForFileAndInitialize("config/config.ini"); err != nil {
+		fmt.Printf("Error creating config file: %s\n", err)
+		os.Exit(1)
+	}
+
 	apiData, err := ReadConfig(APIDATA)
 	if err != nil {
 		fmt.Printf("Error getting config: %s\n", err)
@@ -60,6 +65,28 @@ func init() {
 	APIHEADERS = *headerInfo
 }
 
+func checkForFileAndInitialize(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		file, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		baseHeader := Headers{
+			"Content-Type": "application/json",
+		}
+
+		err = SaveHeaders(baseHeader)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+
 func ReadConfig(section SectionType) (*Config, error) {
 	c := new(Config)
 
@@ -78,10 +105,6 @@ func ReadConfig(section SectionType) (*Config, error) {
 		c.Data = &headers
 	default:
 		return c, fmt.Errorf("Invalid section type: %s", section)
-	}
-
-	if err == nil {
-		fmt.Printf("Mapped Struct: %+v\n", c)
 	}
 
 	return c, err
