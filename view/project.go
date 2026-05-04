@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -19,16 +20,23 @@ type Project struct {
 }
 
 type Job struct {
-	Name string `json:"name"`
-	Description string `json:"description"`
-	DisplayName string `json:"displayName"`
-	Color string `json:"color"`
-	NextBuildNumber int `json:"nextBuildNumber"`
-	Builds []struct {
-		Number int `json:"number"`
-		Result string `json:"result"`
-		Timestamp int64 `json:"timestamp"`
+	Class           string `json:"_class"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	DisplayName     string `json:"displayName"`
+	Color           string `json:"color"`
+	NextBuildNumber int    `json:"nextBuildNumber"`
+	Builds          []struct {
+		Number    int    `json:"number"`
+		Result    string `json:"result"`
+		Timestamp int64  `json:"timestamp"`
 	} `json:"builds"`
+	Jobs []struct {
+		Class string `json:"_class"`
+		Name  string `json:"name"`
+		URL   string `json:"url"`
+		Color string `json:"color"`
+	} `json:"jobs"`
 }
 
 func (pd *Project) ProjectPage() {
@@ -44,6 +52,11 @@ func (pd *Project) ProjectPage() {
 
 	j := &Job{}
 	j.FetchJobData(pd.Name)
+
+	if len(j.Jobs) > 0 {
+		pd.renderMultiBranchPage(j)
+		return
+	}
 
 	table := tview.NewTable().
 		SetEvaluateAllRows(true).
@@ -76,19 +89,65 @@ func (pd *Project) ProjectPage() {
 		return event
 	})
 
+	var stopLogPoll chan struct{}
+	var stopMutex sync.Mutex
+
+	stopCurrentPoll := func() {
+		stopMutex.Lock()
+		defer stopMutex.Unlock()
+		if stopLogPoll != nil {
+			close(stopLogPoll)
+			stopLogPoll = nil
+		}
+	}
+
 	table.SetSelectedFunc(func(row, column int) {
 		if row <= 0 || row > len(j.Builds) {
 			return
 		}
 		b := j.Builds[row-1]
-		logText, err := FetchBuildLog(pd.Name, fmt.Sprintf("%d", b.Number))
+		buildNum := fmt.Sprintf("%d", b.Number)
+
+		stopCurrentPoll()
+
+		stopMutex.Lock()
+		stopLogPoll = make(chan struct{})
+		currentStop := stopLogPoll
+		stopMutex.Unlock()
+
+		logText, err := FetchBuildLog(pd.Name, buildNum)
 		if err != nil {
 			logView.SetText(fmt.Sprintf("Error fetching log: %v", err))
-			return
+		} else {
+			logView.SetText(logText)
 		}
-		logView.SetText(logText)
 		pd.Pages.SwitchToPage("project:" + pd.Name)
 		pd.App.SetFocus(logView)
+
+		go func(bNum string, stop chan struct{}) {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-stop:
+					return
+				case <-ticker.C:
+					building := IsBuildBuilding(pd.Name, bNum)
+					logText, err := FetchBuildLog(pd.Name, bNum)
+					pd.App.QueueUpdateDraw(func() {
+						if err != nil {
+							logView.SetText(fmt.Sprintf("Error fetching log: %v", err))
+						} else {
+							logView.SetText(logText)
+						}
+					})
+					if !building {
+						return
+					}
+				}
+			}
+		}(buildNum, currentStop)
 	})
 	table.SetBorder(true).SetTitle("Builds")
 
@@ -102,8 +161,8 @@ func (pd *Project) ProjectPage() {
 
 	layout.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEsc {
+			stopCurrentPoll()
 			pd.Pages.RemovePage("project:" + pd.Name)
-			pd.App.SetFocus(nil)
 			return nil
 		}
 		if event.Key() == tcell.KeyRune {
@@ -115,8 +174,73 @@ func (pd *Project) ProjectPage() {
 				pd.App.SetFocus(logView)
 				return nil
 			case 'H', 'h':
+				stopCurrentPoll()
 				pd.Pages.RemovePage("project:" + pd.Name)
-				pd.App.SetFocus(nil)
+				pd.Pages.SwitchToPage("home")
+				return nil
+			}
+		}
+		return event
+	})
+
+	pd.Pages.AddPage("project:"+pd.Name, layout, true, true)
+	pd.App.SetFocus(table)
+}
+
+func (pd *Project) renderMultiBranchPage(j *Job) {
+	table := tview.NewTable().
+		SetEvaluateAllRows(true).
+		SetFixed(1, 0).
+		SetSelectable(true, false)
+
+	table.SetCell(0, 0, tview.NewTableCell("Branch Name").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(2))
+	table.SetCell(0, 1, tview.NewTableCell("Status").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
+
+	for i, branch := range j.Jobs {
+		table.SetCell(i+1, 0, tview.NewTableCell(branch.Name))
+		table.SetCell(i+1, 1, tview.NewTableCell(branch.Color))
+	}
+
+	table.SetSelectedFunc(func(row, column int) {
+		if row <= 0 || row > len(j.Jobs) {
+			return
+		}
+		branch := j.Jobs[row-1]
+		p := &Project{
+			Name:  fmt.Sprintf("%s/job/%s", pd.Name, branch.Name),
+			App:   pd.App,
+			Pages: pd.Pages,
+		}
+		p.ProjectPage()
+	})
+	table.SetBorder(true).SetTitle("Branches")
+
+	details := tview.NewTextView().SetDynamicColors(true)
+	details.SetBorder(true).SetTitle("Project Details")
+	details.SetText(fmt.Sprintf("Name: %s\nDisplayName: %s\nDescription: %v\nBranches: %d",
+		j.Name, j.DisplayName, j.Description, len(j.Jobs)))
+
+	right := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(details, 7, 0, false).
+		AddItem(tview.NewBox(), 0, 1, false)
+
+	layout := tview.NewFlex().
+		AddItem(table, 0, 1, true).
+		AddItem(right, 0, 2, false)
+
+	layout.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEsc {
+			pd.Pages.RemovePage("project:" + pd.Name)
+			return nil
+		}
+		if event.Key() == tcell.KeyRune {
+			switch event.Rune() {
+			case 'B', 'b':
+				pd.App.SetFocus(table)
+				return nil
+			case 'H', 'h':
+				pd.Pages.RemovePage("project:" + pd.Name)
+				pd.Pages.SwitchToPage("home")
 				return nil
 			}
 		}
@@ -141,9 +265,14 @@ func (pd *Project) BuildLog() {
 		return
 	}
 
-	logView := tview.NewTextView().SetDynamicColors(true).SetText(logText)
+	logView := tview.NewTextView().SetDynamicColors(true).SetText(logText).SetChangedFunc(func() { pd.App.Draw() })
 	logView.SetBorder(true).SetTitle(fmt.Sprintf("%s #%s", pd.Name, pd.BuildNumber))
+
+	stopLogPoll := make(chan struct{})
+	var stopOnce sync.Once
+
 	logView.SetDoneFunc(func(key tcell.Key) {
+		stopOnce.Do(func() { close(stopLogPoll) })
 		pd.Pages.RemovePage("buildlog:" + pd.Name + ":" + pd.BuildNumber)
 	})
 	logView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -164,6 +293,31 @@ func (pd *Project) BuildLog() {
 
 	pd.Pages.AddPage("buildlog:"+pd.Name+":"+pd.BuildNumber, modal, true, true)
 	pd.App.SetFocus(logView)
+
+	go func(bNum string, stop chan struct{}) {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				building := IsBuildBuilding(pd.Name, bNum)
+				logText, err := FetchBuildLog(pd.Name, bNum)
+				pd.App.QueueUpdateDraw(func() {
+					if err != nil {
+						logView.SetText(fmt.Sprintf("Error fetching log: %v", err))
+					} else {
+						logView.SetText(logText)
+					}
+				})
+				if !building {
+					return
+				}
+			}
+		}
+	}(pd.BuildNumber, stopLogPoll)
 }
 
 func (j *Job) FetchJobData(name string) (string, error) {
@@ -190,4 +344,18 @@ func FetchBuildLog(name string, build string) (string, error) {
 	}
 
 	return string(*res), nil
+}
+
+func IsBuildBuilding(name string, build string) bool {
+	res, err := data.Api("GET", fmt.Sprintf("/job/%s/%s/api/json?tree=building", name, build), nil)
+	if err != nil || res == nil {
+		return false
+	}
+	var b struct {
+		Building bool `json:"building"`
+	}
+	if err := json.NewDecoder(bytes.NewReader(*res)).Decode(&b); err != nil {
+		return false
+	}
+	return b.Building
 }

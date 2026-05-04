@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/glgaspar/jui/data"
@@ -22,15 +23,16 @@ type HomeBuildQueue struct {
 	Items []HomeBuildQueueItem `json:"items"`
 }
 
-func (bq *HomeBuildQueue) FetchBuildQueue() {
+func (bq *HomeBuildQueue) FetchBuildQueue() error {
 	res, err := data.Api("GET", "/queue/api/json", nil)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	err = json.NewDecoder(bytes.NewReader(*res)).Decode(bq)
 	if err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 func (bq *HomeBuildQueue) Display() *tview.Table {
@@ -39,6 +41,13 @@ func (bq *HomeBuildQueue) Display() *tview.Table {
 		SetFixed(1, 0).
 		SetSelectable(true, false)
 
+	bq.UpdateTable(table)
+
+	return table
+}
+
+func (bq *HomeBuildQueue) UpdateTable(table *tview.Table) {
+	table.Clear()
 	table.SetCell(0, 0, tview.NewTableCell("Task Name").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
 	table.SetCell(0, 1, tview.NewTableCell("Reason").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
 
@@ -47,8 +56,6 @@ func (bq *HomeBuildQueue) Display() *tview.Table {
 		table.SetCell(i+1, 1, tview.NewTableCell(item.Why))
 	}
 	table.Box.SetBorder(true).SetTitle("Build Queue (1)")
-
-	return table
 }
 
 type HomeBuildExecutor struct {
@@ -63,15 +70,16 @@ type HomeBuildExecutor struct {
 	} `json:"computer"`
 }
 
-func (be *HomeBuildExecutor) FetchBuildExecutors() {
+func (be *HomeBuildExecutor) FetchBuildExecutors() error {
 	res, err := data.Api("GET", "/computer/api/json?tree=computer[displayName,executors[currentExecutable[*]]]", nil)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	err = json.NewDecoder(bytes.NewReader(*res)).Decode(be)
 	if err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 func (be *HomeBuildExecutor) Display() *tview.Table {
@@ -80,6 +88,13 @@ func (be *HomeBuildExecutor) Display() *tview.Table {
 		SetFixed(1, 0).
 		SetSelectable(true, false)
 
+	be.UpdateTable(table)
+
+	return table
+}
+
+func (be *HomeBuildExecutor) UpdateTable(table *tview.Table) {
+	table.Clear()
 	table.SetCell(0, 0, tview.NewTableCell("Executor").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
 	table.SetCell(0, 1, tview.NewTableCell("Task").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
 	table.SetCell(0, 2, tview.NewTableCell("Status").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
@@ -101,8 +116,6 @@ func (be *HomeBuildExecutor) Display() *tview.Table {
 		}
 	}
 	table.Box.SetBorder(true).SetTitle("Build Executors (2)")
-
-	return table
 }
 
 //color: Indicates build health (e.g., blue=success, red=failure, aborted, disabled, anime=running).
@@ -185,13 +198,13 @@ type HomeView struct {
 
 func (h *HomeView) Render() {
 	buildQueue := &HomeBuildQueue{}
-	buildQueue.FetchBuildQueue()
+	_ = buildQueue.FetchBuildQueue()
 
 	projectList := &HomeProjectList{}
 	projectList.FetchProjectList()
 
 	buildExecutor := &HomeBuildExecutor{}
-	buildExecutor.FetchBuildExecutors()
+	_ = buildExecutor.FetchBuildExecutors()
 
 	queueTable := buildQueue.Display()
 	executorTable := buildExecutor.Display()
@@ -219,22 +232,26 @@ func (h *HomeView) Render() {
 		return event
 	})
 
-	execNames := []string{}
-	for _, computer := range buildExecutor.Computer {
-		for _, executor := range computer.Executors {
-			if executor.CurrentExecutable.FullDisplayName == "" {
-				continue
-			}
-			full := executor.CurrentExecutable.FullDisplayName
-			parts := strings.SplitN(full, " #", 2)
-			execNames = append(execNames, parts[0])
-		}
-	}
 	executorTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEnter {
 			row, _ := executorTable.GetSelection()
-			if row > 0 && row <= len(execNames) {
-				name := execNames[row-1]
+			
+			var name string
+			currentRow := 1
+			for _, computer := range buildExecutor.Computer {
+				for _, executor := range computer.Executors {
+					if executor.CurrentExecutable.FullDisplayName == "" {
+						continue
+					}
+					if currentRow == row {
+						full := executor.CurrentExecutable.FullDisplayName
+						parts := strings.SplitN(full, " #", 2)
+						name = parts[0]
+					}
+					currentRow++
+				}
+			}
+			if name != "" {
 				p := &Project{Name: name, App: h.App, Pages: h.Pages}
 				p.ProjectPage()
 			}
@@ -268,6 +285,10 @@ func (h *HomeView) Render() {
 		AddItem(executorTable, 1, 0, 1, 1, 0, 0, false).
 		AddItem(projectTable, 0, 1, 2, 1, 0, 0, false)
 
+	grid.SetFocusFunc(func() {
+		h.App.SetFocus(focusables[focusIndex])
+	})
+
 	grid.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyTab {
 			focusIndex = (focusIndex + 1) % len(focusables)
@@ -298,6 +319,29 @@ func (h *HomeView) Render() {
 		}
 		return event
 	})
+
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			newBuildQueue := &HomeBuildQueue{}
+			errQ := newBuildQueue.FetchBuildQueue()
+
+			newBuildExecutor := &HomeBuildExecutor{}
+			errE := newBuildExecutor.FetchBuildExecutors()
+
+			h.App.QueueUpdateDraw(func() {
+				if errQ == nil {
+					buildQueue.Items = newBuildQueue.Items
+					buildQueue.UpdateTable(queueTable)
+				}
+				if errE == nil {
+					buildExecutor.Computer = newBuildExecutor.Computer
+					buildExecutor.UpdateTable(executorTable)
+				}
+			})
+		}
+	}()
 
 	h.Pages.AddPage("home", grid, true, true)
 }
