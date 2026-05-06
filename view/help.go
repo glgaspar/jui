@@ -18,6 +18,8 @@ Home Page:
   1 / 2 / 3: Focus Queue / Executors / Projects
   Enter: Open selected item (Project page)
   C: Open Config
+  On Projects:
+	/: open filter
 
 Config Page:
   Enter: Edit API URL

@@ -130,6 +130,8 @@ type HomeProjectList struct {
 			Result string `json:"result"`
 		} `json:"lastBuild,omitempty"`
 	} `json:"jobs"`
+	Filter       bool
+	FilterString string
 }
 
 func (pl *HomeProjectList) FetchProjectList() {
@@ -143,40 +145,34 @@ func (pl *HomeProjectList) FetchProjectList() {
 	}
 }
 
-func (pl *HomeProjectList) Display() *tview.Table {
-	projectDetail := Project{}
-
-	table := tview.NewTable().
-		// SetBorders(true).
-		SetEvaluateAllRows(true).
-		SetFixed(1, 0).
-		SetSelectable(true, false)
-
-	table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEnter {
-			row, _ := table.GetSelection()
-			if row > 0 && row <= len(pl.Jobs) {
-				job := pl.Jobs[row-1]
-
-				projectDetail.Name = job.Name
-				// projectDetail.TakeOver()
-
-			}
-			return nil
-		}
-		return event
-	})
-	table.SetSelectedFunc(func(row, column int) {
-		// table.GetCell(row, column)
-
-	})
-
+func (pl *HomeProjectList) UpdateTable(table *tview.Table) {
+	table.Clear()
 	table.SetCell(0, 0, tview.NewTableCell("Project Name").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(2))
 	table.SetCell(0, 1, tview.NewTableCell("Status").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
 	table.SetCell(0, 2, tview.NewTableCell("Last Build").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
 
-	for i, job := range pl.Jobs {
-		table.SetCell(i+1, 0, tview.NewTableCell(job.Name))
+	var filteredJobs []struct {
+		Name      string `json:"name"`
+		Color     string `json:"color,omitempty"`
+		LastBuild *struct {
+			Number int    `json:"number"`
+			Result string `json:"result"`
+		} `json:"lastBuild,omitempty"`
+	}
+
+	if len(pl.FilterString) > 0 {
+		filterLower := strings.ToLower(pl.FilterString)
+		for _, job := range pl.Jobs {
+			if strings.Contains(strings.ToLower(job.Name), filterLower) {
+				filteredJobs = append(filteredJobs, job)
+			}
+		}
+	} else {
+		filteredJobs = pl.Jobs
+	}
+
+	for i, job := range filteredJobs {
+		table.SetCell(i+1, 0, tview.NewTableCell(job.Name).SetReference(job.Name))
 		table.SetCell(i+1, 1, tview.NewTableCell(job.Color))
 		if job.LastBuild != nil {
 			buildInfo := fmt.Sprintf("Number: %d, Result: %s", job.LastBuild.Number, job.LastBuild.Result)
@@ -185,10 +181,37 @@ func (pl *HomeProjectList) Display() *tview.Table {
 			table.SetCell(i+1, 2, tview.NewTableCell("N/A"))
 		}
 	}
+	table.Select(1, 0)
+}
 
-	table.Box.SetBorder(true).SetTitle("Projects (3)")
+func (pl *HomeProjectList) Display() (*tview.Flex, *tview.Table, *tview.InputField) {
+	flex := tview.NewFlex().SetDirection(tview.FlexRow)
 
-	return table
+	filter := tview.NewInputField().
+		SetLabel("Filter: ").
+		SetFieldWidth(0).
+		SetFieldBackgroundColor(tcell.ColorDefault).
+		SetFieldTextColor(tcell.ColorDefault)
+
+	table := tview.NewTable().
+		SetEvaluateAllRows(true).
+		SetFixed(1, 0).
+		SetSelectable(true, false)
+
+	pl.UpdateTable(table)
+
+	filter.SetChangedFunc(func(text string) {
+		pl.FilterString = text
+		pl.UpdateTable(table)
+	})
+
+	flex.AddItem(table, 0, 1, true)
+
+	if pl.Filter {
+		flex.AddItem(filter, 1, 0, false)
+	}
+
+	return flex, table, filter
 }
 
 type HomeView struct {
@@ -208,7 +231,9 @@ func (h *HomeView) Render() {
 
 	queueTable := buildQueue.Display()
 	executorTable := buildExecutor.Display()
-	projectTable := projectList.Display()
+	projectFlex, projectTable, projectFilter := projectList.Display()
+
+	projectFlex.SetBorder(true).SetTitle("Projects (3)")
 
 	queueTable.SetFocusFunc(func() { queueTable.SetBorderColor(tcell.ColorGreen) })
 	queueTable.SetBlurFunc(func() { queueTable.SetBorderColor(tcell.ColorWhite) })
@@ -216,8 +241,10 @@ func (h *HomeView) Render() {
 	executorTable.SetFocusFunc(func() { executorTable.SetBorderColor(tcell.ColorGreen) })
 	executorTable.SetBlurFunc(func() { executorTable.SetBorderColor(tcell.ColorWhite) })
 
-	projectTable.SetFocusFunc(func() { projectTable.SetBorderColor(tcell.ColorGreen) })
-	projectTable.SetBlurFunc(func() { projectTable.SetBorderColor(tcell.ColorWhite) })
+	projectTable.SetFocusFunc(func() { projectFlex.SetBorderColor(tcell.ColorGreen) })
+	projectTable.SetBlurFunc(func() { projectFlex.SetBorderColor(tcell.ColorWhite) })
+	projectFilter.SetFocusFunc(func() { projectFlex.SetBorderColor(tcell.ColorGreen) })
+	projectFilter.SetBlurFunc(func() { projectFlex.SetBorderColor(tcell.ColorWhite) })
 
 	queueTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEnter {
@@ -235,7 +262,7 @@ func (h *HomeView) Render() {
 	executorTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEnter {
 			row, _ := executorTable.GetSelection()
-			
+
 			var name string
 			currentRow := 1
 			for _, computer := range buildExecutor.Computer {
@@ -263,14 +290,32 @@ func (h *HomeView) Render() {
 	projectTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEnter {
 			row, _ := projectTable.GetSelection()
-			if row > 0 && row <= len(projectList.Jobs) {
-				job := projectList.Jobs[row-1]
-				p := &Project{Name: job.Name, App: h.App, Pages: h.Pages}
-				p.ProjectPage()
+			if row > 0 {
+				cell := projectTable.GetCell(row, 0)
+				if cell != nil && cell.GetReference() != nil {
+					name := cell.GetReference().(string)
+					p := &Project{Name: name, App: h.App, Pages: h.Pages}
+					p.ProjectPage()
+				}
 			}
 			return nil
 		}
+		if event.Rune() == '/' {
+			projectList.Filter = true
+			projectFlex.AddItem(projectFilter, 1, 0, false)
+			h.App.SetFocus(projectFilter)
+			return nil
+		}
 		return event
+	})
+
+	projectFilter.SetDoneFunc(func(key tcell.Key) {
+		switch key {
+		case tcell.KeyEnter, tcell.KeyEscape:
+			projectList.Filter = false
+			projectFlex.RemoveItem(projectFilter)
+			h.App.SetFocus(projectTable)
+		}
 	})
 
 	focusables := []tview.Primitive{queueTable, executorTable, projectTable}
@@ -283,7 +328,7 @@ func (h *HomeView) Render() {
 		SetBordersColor(tview.Styles.PrimaryTextColor).
 		AddItem(queueTable, 0, 0, 1, 1, 0, 0, true).
 		AddItem(executorTable, 1, 0, 1, 1, 0, 0, false).
-		AddItem(projectTable, 0, 1, 2, 1, 0, 0, false)
+		AddItem(projectFlex, 0, 1, 2, 1, 0, 0, false)
 
 	grid.SetFocusFunc(func() {
 		h.App.SetFocus(focusables[focusIndex])
