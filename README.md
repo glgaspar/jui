@@ -8,7 +8,7 @@ Status: functional — the app supports browsing jobs, viewing build history and
 - Home view with: build queue, build executors and project list
 - Project pages: build list, build details and live-tailed build log
 - Multi-branch job support (branch listing and navigation)
-- Configuration screen to set the Jenkins API URL and custom HTTP headers
+- Configuration screen to set the Jenkins API URL, User, Token and custom HTTP headers
 - Keyboard-driven navigation and an in-app help popup (press `?`)
 
 ## Keyboard shortcuts (quick)
@@ -27,7 +27,7 @@ Status: functional — the app supports browsing jobs, viewing build history and
 
 ## Configuration
 On first run a config file is created at `config/config.ini` and a default header `Content-Type = application/json` is added.
-- Set the Jenkins API base URL from the in-app Config screen (press `C`) or by editing `config/config.ini`.
+- Set the Jenkins API base URL, User and Token from the in-app Config screen (press `C`) or by editing `config/config.ini`.
 - Additional HTTP headers can be added/edited from the Config screen.
 
 ## Project layout

@@ -18,6 +18,8 @@ const (
 var (
 	APIURL     string
 	APIHEADERS Headers
+	APITOKEN   string
+	APIUSER    string
 	configPath string
 )
 
@@ -26,7 +28,9 @@ type Config struct {
 }
 
 type Api struct {
-	Url string `ini:"url"`
+	Url   string `ini:"url"`
+	Token string `ini:"token"`
+	User  string `ini:"user"`
 }
 
 type Headers map[string]string
@@ -64,6 +68,8 @@ func init() {
 	}
 
 	APIURL = apiInfo.Url
+	APITOKEN = apiInfo.Token
+	APIUSER = apiInfo.User
 
 	headerData, err := ReadConfig(HEADERDATA)
 	if err != nil {
@@ -137,6 +143,34 @@ func SaveApi(url string) error {
 		return err
 	}
 	APIURL = url
+	return nil
+}
+
+func SaveUser(user string) error {
+	cfg, err := ini.Load(configPath)
+	if err != nil {
+		return err
+	}
+	sec := cfg.Section(string(APIDATA))
+	sec.Key("user").SetValue(user)
+	if err := cfg.SaveTo(configPath); err != nil {
+		return err
+	}
+	APIUSER = user
+	return nil
+}
+
+func SaveToken(token string) error {
+	cfg, err := ini.Load(configPath)
+	if err != nil {
+		return err
+	}
+	sec := cfg.Section(string(APIDATA))
+	sec.Key("token").SetValue(token)
+	if err := cfg.SaveTo(configPath); err != nil {
+		return err
+	}
+	APITOKEN = token
 	return nil
 }
 

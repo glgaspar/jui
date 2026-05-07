@@ -18,16 +18,24 @@ type ConfigView struct {
 
 func (cv *ConfigView) Render() {
 	urlView := cv.URLDisplay(cv.Pages)
+	userView := cv.UserDisplay(cv.Pages)
+	tokenView := cv.TokenDisplay(cv.Pages)
 	table := cv.HeadersDisplay(cv.Pages)
 
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(urlView, 3, 1, true).
+		AddItem(userView, 3, 1, false).
+		AddItem(tokenView, 3, 1, false).
 		AddItem(table, 0, 2, false)
 
-	// Intercept Tab to toggle focus between URL text view and Headers table
+	// Intercept Tab to toggle focus between URL, User, Token and Headers
 	layout.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyTab {
 			if urlView.HasFocus() {
+				cv.App.SetFocus(userView)
+			} else if userView.HasFocus() {
+				cv.App.SetFocus(tokenView)
+			} else if tokenView.HasFocus() {
 				cv.App.SetFocus(table)
 			} else {
 				cv.App.SetFocus(urlView)
@@ -54,6 +62,18 @@ func (cv *ConfigView) Render() {
 	})
 	urlView.SetBlurFunc(func() {
 		urlView.SetBorderColor(tcell.ColorWhite)
+	})
+	userView.SetFocusFunc(func() {
+		userView.SetBorderColor(tcell.ColorGreen)
+	})
+	userView.SetBlurFunc(func() {
+		userView.SetBorderColor(tcell.ColorWhite)
+	})
+	tokenView.SetFocusFunc(func() {
+		tokenView.SetBorderColor(tcell.ColorGreen)
+	})
+	tokenView.SetBlurFunc(func() {
+		tokenView.SetBorderColor(tcell.ColorWhite)
 	})
 	table.SetFocusFunc(func() {
 		table.SetBorderColor(tcell.ColorGreen)
@@ -128,6 +148,127 @@ func (cv *ConfigView) URLShowForm(pages *tview.Pages, tv *tview.TextView) {
 	modal.AddItem(tview.NewBox(), 0, 1, false)
 
 	cv.Pages.AddPage("url_modal", modal, true, true)
+	cv.App.SetFocus(form)
+}
+
+func (cv *ConfigView) UserDisplay(pages *tview.Pages) *tview.TextView {
+	tv := tview.NewTextView().SetText(config.APIUSER)
+	tv.SetBorder(true).SetTitle("API User (Enter to edit)")
+
+	tv.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEnter {
+			cv.UserShowForm(pages, tv)
+			return nil
+		}
+		return event
+	})
+
+	return tv
+}
+
+func (cv *ConfigView) UserShowForm(pages *tview.Pages, tv *tview.TextView) {
+	form := tview.NewForm()
+	form.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEsc {
+			cv.Pages.RemovePage("user_modal")
+			cv.App.SetFocus(tv)
+			return nil
+		}
+		return event
+	})
+
+	userField := tview.NewInputField().SetLabel("API User: ").SetText(config.APIUSER).SetFieldWidth(50)
+	form.AddFormItem(userField)
+	form.AddButton("Save", func() {
+		newUser := userField.GetText()
+		config.SaveUser(newUser)
+		tv.SetText(newUser)
+		cv.Pages.RemovePage("user_modal")
+		cv.App.SetFocus(tv)
+	})
+	form.AddButton("Cancel", func() {
+		cv.Pages.RemovePage("user_modal")
+		cv.App.SetFocus(tv)
+	})
+
+	form.SetBorder(true).SetTitle("Edit API User")
+
+	// Center the form in a box overlay
+	modal := tview.NewFlex().SetDirection(tview.FlexRow)
+	modal.AddItem(tview.NewBox(), 0, 1, false)
+	inner := tview.NewFlex()
+	inner.AddItem(tview.NewBox(), 0, 1, false)
+	inner.AddItem(form, 60, 0, true)
+	inner.AddItem(tview.NewBox(), 0, 1, false)
+	modal.AddItem(inner, 10, 0, true)
+	modal.AddItem(tview.NewBox(), 0, 1, false)
+
+	cv.Pages.AddPage("user_modal", modal, true, true)
+	cv.App.SetFocus(form)
+}
+
+func (cv *ConfigView) TokenDisplay(pages *tview.Pages) *tview.TextView {
+	token := config.APITOKEN
+	displayText := ""
+	if token != "" {
+		displayText = "********"
+	}
+	tv := tview.NewTextView().SetText(displayText)
+	tv.SetBorder(true).SetTitle("API Token (Enter to edit)")
+
+	tv.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEnter {
+			cv.TokenShowForm(pages, tv)
+			return nil
+		}
+		return event
+	})
+
+	return tv
+}
+
+func (cv *ConfigView) TokenShowForm(pages *tview.Pages, tv *tview.TextView) {
+	form := tview.NewForm()
+	form.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEsc {
+			cv.Pages.RemovePage("token_modal")
+			cv.App.SetFocus(tv)
+			return nil
+		}
+		return event
+	})
+
+	tokenField := tview.NewInputField().SetLabel("API Token: ").SetText(config.APITOKEN).SetFieldWidth(50).SetMaskCharacter('*')
+	form.AddFormItem(tokenField)
+	form.AddButton("Save", func() {
+		newToken := tokenField.GetText()
+		config.SaveToken(newToken)
+		if newToken != "" {
+			tv.SetText("********")
+		} else {
+			tv.SetText("")
+		}
+		cv.Pages.RemovePage("token_modal")
+		cv.App.SetFocus(tv)
+	})
+	form.AddButton("Cancel", func() {
+		cv.Pages.RemovePage("token_modal")
+		cv.App.SetFocus(tv)
+	})
+
+	form.SetBorder(true).SetTitle("Edit API Token")
+
+	// Center the form in a box overlay
+	modal := tview.NewFlex().SetDirection(tview.FlexRow)
+	modal.AddItem(tview.NewBox(), 0, 1, false)
+	inner := tview.NewFlex()
+	inner.AddItem(tview.NewBox(), 0, 1, false)
+	inner.AddItem(form, 60, 0, true)
+	inner.AddItem(tview.NewBox(), 0, 1, false)
+	modal.AddItem(inner, 10, 0, true)
+	modal.AddItem(tview.NewBox(), 0, 1, false)
+
+	cv.Pages.AddPage("token_modal", modal, true, true)
 	cv.App.SetFocus(form)
 }
 

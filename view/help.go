@@ -34,6 +34,7 @@ Project Page:
   H: Go to Home
   B: Focus builds table
   L: Focus build log
+  R: Run new build (requires token)
   On Builds table:
     Enter: Open selected build log
   On Build Log:

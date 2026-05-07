@@ -63,19 +63,23 @@ func (pd *Project) ProjectPage() {
 		SetFixed(1, 0).
 		SetSelectable(true, false)
 
-	table.SetCell(0, 0, tview.NewTableCell("Number").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
-	table.SetCell(0, 1, tview.NewTableCell("Result").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
-	table.SetCell(0, 2, tview.NewTableCell("Timestamp").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
+	populateTable := func() {
+		table.Clear()
+		table.SetCell(0, 0, tview.NewTableCell("Number").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
+		table.SetCell(0, 1, tview.NewTableCell("Result").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
+		table.SetCell(0, 2, tview.NewTableCell("Timestamp").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
 
-	for i, b := range j.Builds {
-		table.SetCell(i+1, 0, tview.NewTableCell(fmt.Sprintf("%d", b.Number)))
-		table.SetCell(i+1, 1, tview.NewTableCell(b.Result))
-		table.SetCell(i+1, 2, tview.NewTableCell(time.Unix(b.Timestamp/1000, 0).Format("2006-01-02 15:04:05")))
+		for i, b := range j.Builds {
+			table.SetCell(i+1, 0, tview.NewTableCell(fmt.Sprintf("%d", b.Number)))
+			table.SetCell(i+1, 1, tview.NewTableCell(b.Result))
+			table.SetCell(i+1, 2, tview.NewTableCell(time.Unix(b.Timestamp/1000, 0).Format("2006-01-02 15:04:05")))
+		}
 	}
+	populateTable()
 
 	details := tview.NewTextView().SetDynamicColors(true)
 	details.SetBorder(true).SetTitle("Job Details")
-	details.SetText(fmt.Sprintf("Name: %s\nDisplayName: %s\nDescription: %v\nColor: %s\nNextBuildNumber: %d",
+	details.SetText(fmt.Sprintf("Name: %s\nDisplayName: %s\nDescription: %v\nColor: %s\nNextBuildNumber: %d\n\nShortcuts: R to Run/Build",
 		j.Name, j.DisplayName, j.Description, j.Color, j.NextBuildNumber))
 
 	logView := tview.NewTextView().SetDynamicColors(true).SetChangedFunc(func() { pd.App.Draw() })
@@ -173,6 +177,28 @@ func (pd *Project) ProjectPage() {
 			case 'L', 'l':
 				pd.App.SetFocus(logView)
 				return nil
+			case 'R', 'r':
+				err := TriggerBuild(pd.Name)
+				if err != nil {
+					details.SetText(fmt.Sprintf("[red]Error: %v[-]\nName: %s\nDisplayName: %s\nDescription: %v\nColor: %s\nNextBuildNumber: %d\n\nShortcuts: R to Run/Build",
+						err, j.Name, j.DisplayName, j.Description, j.Color, j.NextBuildNumber))
+				} else {
+					details.SetText(fmt.Sprintf("[green]Build triggered![-]\nName: %s\nDisplayName: %s\nDescription: %v\nColor: %s\nNextBuildNumber: %d\n\nShortcuts: R to Run/Build",
+						j.Name, j.DisplayName, j.Description, j.Color, j.NextBuildNumber))
+
+					go func() {
+						time.Sleep(1 * time.Second)
+						newJ := &Job{}
+						newJ.FetchJobData(pd.Name)
+						pd.App.QueueUpdateDraw(func() {
+							*j = *newJ
+							populateTable()
+							details.SetText(fmt.Sprintf("[green]Build triggered and list refreshed![-]\nName: %s\nDisplayName: %s\nDescription: %v\nColor: %s\nNextBuildNumber: %d\n\nShortcuts: R to Run/Build",
+								j.Name, j.DisplayName, j.Description, j.Color, j.NextBuildNumber))
+						})
+					}()
+				}
+				return nil
 			case 'H', 'h':
 				stopCurrentPoll()
 				pd.Pages.RemovePage("project:" + pd.Name)
@@ -193,13 +219,17 @@ func (pd *Project) renderMultiBranchPage(j *Job) {
 		SetFixed(1, 0).
 		SetSelectable(true, false)
 
-	table.SetCell(0, 0, tview.NewTableCell("Branch Name").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(2))
-	table.SetCell(0, 1, tview.NewTableCell("Status").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
+	populateBranchTable := func() {
+		table.Clear()
+		table.SetCell(0, 0, tview.NewTableCell("Branch Name").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(2))
+		table.SetCell(0, 1, tview.NewTableCell("Status").SetAlign(tview.AlignLeft).SetSelectable(false).SetExpansion(1))
 
-	for i, branch := range j.Jobs {
-		table.SetCell(i+1, 0, tview.NewTableCell(branch.Name))
-		table.SetCell(i+1, 1, tview.NewTableCell(branch.Color))
+		for i, branch := range j.Jobs {
+			table.SetCell(i+1, 0, tview.NewTableCell(branch.Name))
+			table.SetCell(i+1, 1, tview.NewTableCell(branch.Color))
+		}
 	}
+	populateBranchTable()
 
 	table.SetSelectedFunc(func(row, column int) {
 		if row <= 0 || row > len(j.Jobs) {
@@ -217,7 +247,7 @@ func (pd *Project) renderMultiBranchPage(j *Job) {
 
 	details := tview.NewTextView().SetDynamicColors(true)
 	details.SetBorder(true).SetTitle("Project Details")
-	details.SetText(fmt.Sprintf("Name: %s\nDisplayName: %s\nDescription: %v\nBranches: %d",
+	details.SetText(fmt.Sprintf("Name: %s\nDisplayName: %s\nDescription: %v\nBranches: %d\n\nShortcuts: R to Run/Build Selected Branch",
 		j.Name, j.DisplayName, j.Description, len(j.Jobs)))
 
 	right := tview.NewFlex().SetDirection(tview.FlexRow).
@@ -237,6 +267,33 @@ func (pd *Project) renderMultiBranchPage(j *Job) {
 			switch event.Rune() {
 			case 'B', 'b':
 				pd.App.SetFocus(table)
+				return nil
+			case 'R', 'r':
+				row, _ := table.GetSelection()
+				if row > 0 && row <= len(j.Jobs) {
+					branch := j.Jobs[row-1]
+					branchPath := fmt.Sprintf("%s/job/%s", pd.Name, branch.Name)
+					err := TriggerBuild(branchPath)
+					if err != nil {
+						details.SetText(fmt.Sprintf("[red]Error triggering build: %v[-]\nName: %s\nDisplayName: %s\nDescription: %v\nBranches: %d\n\nShortcuts: R to Run/Build Selected Branch",
+							err, j.Name, j.DisplayName, j.Description, len(j.Jobs)))
+					} else {
+						details.SetText(fmt.Sprintf("[green]Build triggered for %s![-]\nName: %s\nDisplayName: %s\nDescription: %v\nBranches: %d\n\nShortcuts: R to Run/Build Selected Branch",
+							branch.Name, j.Name, j.DisplayName, j.Description, len(j.Jobs)))
+
+						go func() {
+							time.Sleep(1 * time.Second)
+							newJ := &Job{}
+							newJ.FetchJobData(pd.Name)
+							pd.App.QueueUpdateDraw(func() {
+								*j = *newJ
+								populateBranchTable()
+								details.SetText(fmt.Sprintf("[green]Build triggered for %s and list refreshed![-]\nName: %s\nDisplayName: %s\nDescription: %v\nBranches: %d\n\nShortcuts: R to Run/Build Selected Branch",
+									branch.Name, j.Name, j.DisplayName, j.Description, len(j.Jobs)))
+							})
+						}()
+					}
+				}
 				return nil
 			case 'H', 'h':
 				pd.Pages.RemovePage("project:" + pd.Name)
@@ -358,4 +415,9 @@ func IsBuildBuilding(name string, build string) bool {
 		return false
 	}
 	return b.Building
+}
+
+func TriggerBuild(name string) error {
+	_, err := data.Api("POST", fmt.Sprintf("/job/%s/build", name), nil)
+	return err
 }
